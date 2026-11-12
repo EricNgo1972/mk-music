@@ -34,6 +34,7 @@
     var LS_ME = 'ytdl.box.me';     // last known {id, name}, so a reboot offline still knows who it is
     var LS_NOW = 'ytdl.box.now';   // what it is playing, so a reboot carries on
     var LS_VOL = 'ytdl.box.vol';
+    var LS_MUTE = 'ytdl.box.mute';
 
     function $(id) { return document.getElementById(id); }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -64,10 +65,15 @@
     var audio = $('bx-audio');
     var vol = parseFloat(lsGet(LS_VOL));
     audio.volume = isFinite(vol) ? Math.max(0, Math.min(1, vol)) : 1;
+    audio.muted = lsGet(LS_MUTE) === '1';
+
+    // Set when another copy of this player took over (see "one copy at a time" below).
+    // An asleep copy writes nothing, sends nothing and plays nothing.
+    var asleep = false;
 
     function cur() { return now ? now.tracks[now.order[now.pos]] : null; }
     function trackAt(p) { return now ? now.tracks[now.order[(p + now.order.length) % now.order.length]] : null; }
-    function save() { lsSet(LS_NOW, now ? JSON.stringify(now) : null); }
+    function save() { if (!asleep) lsSet(LS_NOW, now ? JSON.stringify(now) : null); }
     function pathOf(u) { try { return new URL(u, location.origin).pathname; } catch (e) { return u; } }
 
     // --- network (always time-boxed) ---------------------------------------------------
@@ -99,6 +105,7 @@
     var helloTimer = null;
     async function hello() {
         clearTimeout(helloTimer);
+        if (asleep) return;
         try {
             var r = await post('/api/box/hello', { key: key, version: V, state: me ? report() : null });
             if (!r.ok) throw new Error('status ' + r.status);
@@ -121,6 +128,7 @@
         } catch (e) {
             setLink(false);
         }
+        if (asleep) return;   // went to sleep while the request was out
         render();
         helloTimer = setTimeout(hello, HELLO_MS);
     }
@@ -152,7 +160,7 @@
     }
 
     function handle(cmd) {
-        if (!cmd || !cmd.type) return;
+        if (asleep || !cmd || !cmd.type) return;
         switch (cmd.type) {
             case 'hello': hello(); return;
             case 'reload': location.reload(); return;
@@ -173,6 +181,7 @@
                 if (isFinite(cmd.pos)) { try { audio.currentTime = Math.max(0, cmd.pos); } catch (e) { } }
                 break;
             case 'volume': setVolume(cmd.value); break;
+            case 'mute': setMuted(!!cmd.on); break;
             case 'shuffle': setShuffle(!!cmd.on); break;
         }
         render();
@@ -297,6 +306,14 @@
         if (!isFinite(v)) return;
         audio.volume = Math.max(0, Math.min(1, v));
         lsSet(LS_VOL, String(audio.volume));
+        // Turning the volume up is a request to hear it: lift a mute rather than leave
+        // someone dragging a slider that does nothing.
+        if (audio.volume > 0 && audio.muted) setMuted(false);
+    }
+
+    function setMuted(on) {
+        audio.muted = !!on;
+        lsSet(LS_MUTE, on ? '1' : null);
     }
 
     function setShuffle(on) {
@@ -514,6 +531,7 @@
             pos: isFinite(audio.currentTime) ? audio.currentTime : 0,
             dur: isFinite(audio.duration) ? audio.duration : 0,
             volume: audio.volume,
+            muted: audio.muted,
             index: now ? now.order[now.pos] : -1,
             count: now ? now.tracks.length : 0,
             shuffle: !!(now && now.shuffle),
@@ -527,12 +545,12 @@
     // next change, the 10-second heartbeat or the next check-in carries the same picture.
     var pushTimer = null, lastPush = 0;
     function pushSoon() {
-        if (pushTimer || !me) return;
+        if (pushTimer || !me || asleep) return;
         var wait = Math.max(0, 1000 - (Date.now() - lastPush));
         pushTimer = setTimeout(function () {
             pushTimer = null;
             lastPush = Date.now();
-            if (!me) return;
+            if (!me || asleep) return;
             post('/api/box/state', { key: key, state: report() }).then(function (r) {
                 setLink(true);
                 if (r.status === 404) hello();   // not paired any more
@@ -609,7 +627,40 @@
         }
         txt('bx-note', note);
         $('bx-tap').hidden = !needsTap;
+        txt('bx-tap-s', isInstalled()
+            ? 'The browser needs one tap before it will play sound.'
+            : 'The browser needs one tap before it will play sound. Installed as an app, it won’t ask.');
+        renderInstall(mode);
+        renderControls();
         paintTime();
+    }
+
+    // Step 1 of setup, and the reminder line once paired, from whether this page is the
+    // installed app and whether the browser has offered to install it.
+    function renderInstall(mode) {
+        var inApp = isInstalled();
+        $('bx-step-install').classList.toggle('is-done', inApp);
+        txt('bx-install-n', inApp ? '✓' : '1');
+        txt('bx-install-t', inApp ? 'Installed as an app.'
+            : justInstalled ? 'Installed. Open My Music Player from the home screen.'
+            : installPrompt ? 'Tap anywhere to install this player as an app.'
+            : IOS ? 'Install it: tap Share, then Add to Home Screen, and open it from there.'
+            : 'Install it: open the Chrome menu ⋮ and tap Install app (or Add to Home screen).');
+        $('bx-install-s').hidden = inApp || justInstalled;
+        $('bx-hint').hidden = mode === 'pair' || inApp || !installPrompt || ctlOpen;
+    }
+
+    function renderControls() {
+        var ctl = $('bx-ctl');
+        ctl.hidden = !ctlOpen || !me;
+        if (ctl.hidden) return;
+        var playing = !!now && !audio.paused && !needsTap;
+        txt('bx-c-play', playing ? '❙❙' : '▶');
+        $('bx-c-play').disabled = $('bx-c-prev').disabled = $('bx-c-next').disabled = !now;
+        txt('bx-c-mute', audio.muted || audio.volume === 0 ? '🔇' : '🔊');
+        $('bx-c-mute').classList.toggle('on', audio.muted);
+        var v = String(Math.round(audio.volume * 100));
+        if ($('bx-c-vol').value !== v) $('bx-c-vol').value = v;
     }
 
     function paintTime() {
@@ -622,25 +673,190 @@
         txt('bx-dur', isFinite(d) ? fmt(d) : '');
     }
 
-    // The one touch the browser insists on. It also re-takes the wake lock, which some
-    // browsers only grant after a gesture.
-    $('bx-tap').addEventListener('click', function () {
-        needsTap = false;
+    // --- install as an app ------------------------------------------------------------
+    // Like a MapleKiosk wall TV: in a browser tab, the next tap (or a TV remote's OK, which
+    // arrives as a keydown) opens the browser's install prompt. Installed, the player opens
+    // full screen from its own icon, comes back after a restart, and, because Chrome lets
+    // installed apps start sound by themselves, no longer needs "tap to start".
+    var IOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS says "Mac"
+    var installPrompt = null;
+    var justInstalled = false;
+
+    function isInstalled() {
+        return (window.matchMedia && (matchMedia('(display-mode: fullscreen)').matches
+                                   || matchMedia('(display-mode: standalone)').matches))
+            || navigator.standalone === true;
+    }
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();          // ours to show, on the next tap
+        installPrompt = e;
         render();
-        wake();
-        if (now) { now.playing = true; save(); tryPlay(); }
+    });
+    window.addEventListener('appinstalled', function () {
+        installPrompt = null;
+        justInstalled = true;
+        render();
     });
 
-    // Keep the screen on: a player that goes dark looks broken, and on some phones a
-    // sleeping screen also means a frozen tab.
-    var lock = null;
-    async function wake() {
-        if (lock || !('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
-        try {
-            lock = await navigator.wakeLock.request('screen');
-            lock.addEventListener('release', function () { lock = null; });
-        } catch (e) { lock = null; }
+    // --- on-screen controls -----------------------------------------------------------
+    // For whoever is standing next to the player: a tap shows play/pause, skip, mute and
+    // volume, and they hide again by themselves so the screen stays a clean "now playing".
+    // Everything here is the same command the Players page sends, so both stay in step.
+    var CTL_MS = 6000;
+    var ctlOpen = false, ctlTimer = null;
+    function showControls() {
+        ctlOpen = true;
+        clearTimeout(ctlTimer);
+        ctlTimer = setTimeout(function () { ctlOpen = false; render(); }, CTL_MS);
+        render();
     }
+
+    function local(cmd) { handle(cmd); showControls(); }
+    $('bx-c-prev').addEventListener('click', function () { local({ type: 'prev' }); });
+    $('bx-c-play').addEventListener('click', function () { local({ type: 'toggle' }); });
+    $('bx-c-next').addEventListener('click', function () { local({ type: 'next' }); });
+    $('bx-c-mute').addEventListener('click', function () { local({ type: 'mute', on: !audio.muted }); });
+    $('bx-c-vol').addEventListener('input', function (e) {
+        local({ type: 'volume', value: Number(e.target.value) / 100 });
+    });
+
+    // --- every tap ---------------------------------------------------------------------
+    // One handler, in order of what the tap is most likely for. Capture phase, so it runs
+    // before the button that was hit, and pointerdown/keydown because those are the
+    // gestures browsers accept for sound, installing and full screen.
+    function onGesture(e) {
+        if (asleep) {
+            if (e.type === 'pointerdown') location.reload();   // "use this one instead"
+            return;
+        }
+        wake();   // some browsers only grant the wake lock after a gesture
+        if (needsTap) {
+            needsTap = false;
+            if (now) { now.playing = true; save(); tryPlay(); }
+            render();
+            return;
+        }
+        if (!isInstalled()) {
+            if (installPrompt) {
+                var p = installPrompt;
+                installPrompt = null;
+                p.prompt().catch(function () { }).then(render);
+                return;
+            }
+            if (!document.fullscreenElement && document.fullscreenEnabled) {
+                document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(function () { });
+            }
+        }
+        if (me && (!e.target.closest || !e.target.closest('#bx-ctl'))) showControls();
+    }
+    ['pointerdown', 'keydown'].forEach(function (t) { window.addEventListener(t, onGesture, true); });
+
+    // --- one copy at a time -----------------------------------------------------------
+    // The installed app and a Chrome tab on the same device share storage, so they are the
+    // same player with the same key, and both would play. The newest copy wins. The others
+    // go quiet and say so, and a tap on one takes it back (by reloading, which claims again).
+    var instanceId = Math.random().toString(36).slice(2);
+    var bc = null;
+    try { bc = new BroadcastChannel('ytdl-box'); } catch (e) { }
+    if (bc) {
+        bc.onmessage = function (e) {
+            if (e.data && e.data.claim && e.data.claim !== instanceId) sleep(e.data.app);
+        };
+    }
+
+    function sleep(byApp) {
+        if (asleep) return;
+        asleep = true;
+        window.__ytdlAsleep = true;   // box.html: don't reload this copy when a new build lands
+        gen++;
+        clearStall();
+        clearTimeout(helloTimer);
+        letSleep();   // a copy that has handed over lets the screen sleep
+        audio.pause();
+        audio.removeAttribute('src');
+        try { audio.load(); } catch (e) { }
+        if (es) { try { es.close(); } catch (e) { } es = null; }
+        txt('bx-asleep-t', byApp ? 'This player is now running as the installed app'
+                                 : 'This player is open somewhere else');
+        txt('bx-asleep-s', 'You can close this ' + (isInstalled() ? 'window' : 'tab')
+            + '. Tap here to use this one instead.');
+        $('bx-asleep').hidden = false;
+    }
+    // --- keep the screen on -------------------------------------------------------------
+    // A player that goes dark looks broken, a TV that drops into its screensaver hides what
+    // is playing, and on some phones a sleeping screen also means a frozen tab.
+    // First choice is the Screen Wake Lock. The system can take it back at any time (battery
+    // saver, the tab hidden for a moment), so we ask again whenever that happens and check
+    // every minute anyway. Where there is no Wake Lock (plain http on the LAN, older
+    // browsers, some TV browsers) or it is refused, a tiny silent black video loops in a
+    // corner: browsers keep the screen on while a video plays. It is a data: URI so it
+    // needs no network and no cache, and works the same after a reboot with no signal.
+    var lock = null, film = null, wakeRetry = null;
+    var AWAKE_WEBM = 'data:video/webm;base64,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ggb1gAgIrLMOxqOKggcJgAgIrLMOxqOKggcdgAgIrLMOxqOKggcxgAgIrLMOxqOKggdFgAgIrLMOxqOKggdZgAgIrLMOxqOKggdtgAgIrLMOxqOKggeBgAgIrLMOxqOKggeVgAgIrLMOxqOKggepgAgIrLMOxqOKgge9gAgIrLMOxqOKggfRgAgIrLMOxqOZgQfQALEBAAEQEAAYADA/9AwAAAD+/6tQgKOKggflgAgIrLMOxqOKggf5gAgIrLMOxqOKgggNgAgIrLMOxqOKggghgAgIrLMOxqOKggg1gAgIrLMOxqOKgghJgAgIrLMOxqOKgghdgAgIrLMOxqOKgghxgAgIrLMOxqOKggiFgAgIrLMOxqOKggiZgAgIrLMOxqOKggitgAgIrLMOxqOKggjBgAgIrLMOxqOKggjVgAgIrLMOxqOKggjpgAgIrLMOxqOKggj9gAgIrLMOxqOKggkRgAgIrLMOxqOKggklgAgIrLMOxqOKggk5gAgIrLMOxqOKgglNgAgIrLMOxqOKgglhgAgIrLMOxqOKggl1gAgIrLMOxqOKggmJgAgIrLMOxqOKggmdgAgIrLMOxqOKggmxgAgIrLMOxqOKggnFgAgIrLMOxqOKggnZgAgIrLMOxqOKggntgAgIrLMOxqOKggoBgAgIrLMOxqOKggoVgAgIrLMOxqOKggopgAgIrLMOxqOKggo9gAgIrLMOxqOKggpRgAgIrLMOxqOKggplgAgIrLMOxqOKggp5gAgIrLMOxqOKggqNgAgIrLMOxqOKggqhgAgIrLMOxqOKggq1gAgIrLMOxqOKggrJgAgIrLMOxqOKggrdgAgIrLMOxqOKggrxgAgIrLMOxqOKggsFgAgIrLMOxqOKggsZgAgIrLMOxqOKggstgAgIrLMOxqOKggtBgAgIrLMOxqOKggtVgAgIrLMOxqOKggtpgAgIrLMOxqOKggt9gAgIrLMOxqOKgguRgAgIrLMOxqOKggulgAgIrLMOxqOKggu5gAgIrLMOxqOZgQu4ALEBAAEQEAAYADA/9AwAAAD+/6tQgKOKggvNgAgIrLMOxqOKggvhgAgIrLMOxqOKggv1gAgIrLMOxqOKggwJgAgIrLMOxqOKggwdgAgIrLMOxqOKggwxgAgIrLMOxqOKggxFgAgIrLMOxqOKggxZgAgIrLMOxqOKggxtgAgIrLMOxqOKggyBgAgIrLMOxqOKggyVgAgIrLMOxqOKggypgAgIrLMOxqOKggy9gAgIrLMOxqOKggzRgAgIrLMOxqOKggzlgAgIrLMOxqOKggz5gAgIrLMOxqOKgg0NgAgIrLMOxqOKgg0hgAgIrLMOxqOKgg01gAgIrLMOxqOKgg1JgAgIrLMOxqOKgg1dgAgIrLMOxqOKgg1xgAgIrLMOxqOKgg2FgAgIrLMOxqOKgg2ZgAgIrLMOxqOKgg2tgAgIrLMOxqOKgg3BgAgIrLMOxqOKgg3VgAgIrLMOxqOKgg3pgAgIrLMOxqOKgg39gAgIrLMOxqOKgg4RgAgIrLMOxqOKgg4lgAgIrLMOxqOKgg45gAgIrLMOxqOKgg5NgAgIrLMOxqOKgg5hgAgIrLMOxqOKgg51gAgIrLMOxqOKgg6JgAgIrLMOxqOKgg6dgAgIrLMOxqOKgg6xgAgIrLMOxqOKgg7FgAgIrLMOxqOKgg7ZgAgIrLMOxqOKgg7tgAgIrLMOxqOKgg8BgAgIrLMOxqOKgg8VgAgIrLMOxqOKgg8pgAgIrLMOxqOKgg89gAgIrLMOxqOKgg9RgAgIrLMOxqOKgg9lgAgIrLMOxqOKgg95gAgIrLMOxqOKgg+NgAgIrLMOxqCToYqCD6EACAissw7GdaKEAM3+YBxTu2uRu4+zgQC3iveBAfGCAmDwgRA=';
+    var AWAKE_MP4 = 'data:video/mp4;base64,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';
+
+    function wantAwake() { return !asleep && document.visibilityState === 'visible'; }
+
+    async function wake() {
+        if (!wantAwake() || lock) return;
+        if ('wakeLock' in navigator) {
+            try {
+                var l = await navigator.wakeLock.request('screen');
+                if (!wantAwake() || lock) { l.release().catch(function () { }); return; }
+                lock = l;
+                lock.addEventListener('release', function () {
+                    if (lock === l) lock = null;
+                    // Taken back while we still want it: the film covers the gap, and we
+                    // ask again shortly.
+                    if (wantAwake()) {
+                        playFilm();
+                        clearTimeout(wakeRetry);
+                        wakeRetry = setTimeout(wake, 3000);
+                    }
+                });
+                stopFilm();
+                return;
+            } catch (e) { }
+        }
+        playFilm();
+    }
+
+    function playFilm() {
+        if (!film) {
+            film = document.createElement('video');
+            film.muted = true;
+            film.loop = true;
+            film.playsInline = true;
+            ['muted', 'loop', 'playsinline', 'webkit-playsinline', 'disableremoteplayback']
+                .forEach(function (a) { film.setAttribute(a, ''); });
+            film.setAttribute('aria-hidden', 'true');
+            film.tabIndex = -1;
+            // Kept on screen (not display:none, not zero size): some browsers pause or
+            // ignore a video nobody can see.
+            film.style.cssText = 'position:fixed;left:0;bottom:0;width:2px;height:2px;'
+                + 'opacity:.01;pointer-events:none;z-index:-1';
+            [['video/webm', AWAKE_WEBM], ['video/mp4', AWAKE_MP4]].forEach(function (s) {
+                var src = document.createElement('source');
+                src.type = s[0];
+                src.src = s[1];
+                film.appendChild(src);
+            });
+            document.body.appendChild(film);
+        }
+        if (film.paused) { var p = film.play(); if (p && p.catch) p.catch(function () { }); }
+    }
+
+    function stopFilm() { if (film && !film.paused) film.pause(); }
+
+    function letSleep() {
+        clearTimeout(wakeRetry);
+        stopFilm();
+        if (lock) { var l = lock; lock = null; l.release().catch(function () { }); }
+    }
+
+    setInterval(wake, 60000);
 
     document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'visible') { wake(); hello(); }
@@ -650,6 +866,7 @@
     // --- start-up ----------------------------------------------------------------------
     // Carry on from where the box was before it lost power: no server needed, so a box
     // rebooting into a dead network still plays what it was playing.
+    if (bc) bc.postMessage({ claim: instanceId, app: isInstalled() });   // the others go quiet
     render();
     if (me && now) {
         if (now.playing) playCurrent(now.at || 0);

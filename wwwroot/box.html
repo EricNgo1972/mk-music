@@ -22,13 +22,25 @@
             <div class="bx-link"><span class="bx-dot" id="bx-dot"></span><span id="bx-link">Connecting…</span></div>
         </header>
 
+        <!-- Setup, the same two steps as a MapleKiosk wall TV: install the app, then pair.
+             box.js marks step 1 done (✓) once the page is running as the installed app. -->
         <section class="bx-pair">
-            <div class="bx-eyebrow">Pair this player</div>
-            <div class="bx-code" id="bx-code">· · · ·</div>
-            <ol class="bx-steps">
-                <li>Open My Music on your phone and go to <b>Players</b>.</li>
-                <li>Tap <b>Add player</b>, enter this code, and give it a name.</li>
-            </ol>
+            <div class="bx-steps">
+                <div class="bx-step" id="bx-step-install">
+                    <span class="bx-n" id="bx-install-n">1</span>
+                    <span class="bx-step-t">
+                        <span id="bx-install-t">Tap anywhere to install this player as an app.</span>
+                        <span class="bx-step-s" id="bx-install-s">Installed, it opens full screen, even after a restart, and starts its music without a tap.</span>
+                    </span>
+                </div>
+                <div class="bx-step">
+                    <span class="bx-n" id="bx-pair-n">2</span>
+                    <span class="bx-step-t">
+                        In My Music, open <b>Players</b> → <b>Add player</b> and enter this code:
+                        <span class="bx-code" id="bx-code">· · · ·</span>
+                    </span>
+                </div>
+            </div>
         </section>
 
         <section class="bx-idle">
@@ -51,12 +63,32 @@
 
         <footer class="bx-note" id="bx-note"></footer>
 
+        <!-- On-screen controls for whoever is next to the player. A tap shows them, and they
+             hide again after a few seconds. -->
+        <div class="bx-ctl" id="bx-ctl" hidden>
+            <button class="bx-c" id="bx-c-prev" aria-label="Previous">◀◀</button>
+            <button class="bx-c bx-c-main" id="bx-c-play" aria-label="Play or pause">▶</button>
+            <button class="bx-c" id="bx-c-next" aria-label="Next">▶▶</button>
+            <span class="bx-c-sep"></span>
+            <button class="bx-c" id="bx-c-mute" aria-label="Mute">🔊</button>
+            <input class="bx-c-vol" id="bx-c-vol" type="range" min="0" max="100" step="5" aria-label="Volume" />
+        </div>
+
+        <!-- Paired but still running in a browser tab: a quiet reminder that one tap installs it. -->
+        <div class="bx-hint" id="bx-hint" hidden>Tap anywhere to install this player as an app (full screen)</div>
+
+        <!-- This copy has handed over to another one (the installed app, usually). -->
+        <div class="bx-asleep" id="bx-asleep" hidden>
+            <div class="bx-asleep-t" id="bx-asleep-t">This player is open somewhere else</div>
+            <div class="bx-asleep-s" id="bx-asleep-s">You can close this tab.</div>
+        </div>
+
         <!-- Browsers refuse to make sound until someone has touched the page. This is that
              touch, once per start-up; it covers the whole screen so any tap counts. -->
         <button class="bx-tap" id="bx-tap" hidden>
             <span class="bx-tap-i">▶</span>
             <span class="bx-tap-t">Tap to start the music</span>
-            <span class="bx-tap-s">The browser needs one tap before it will play sound.</span>
+            <span class="bx-tap-s" id="bx-tap-s">The browser needs one tap before it will play sound.</span>
         </button>
 
         <audio id="bx-audio" preload="auto"></audio>
@@ -69,7 +101,9 @@
             var hadController = !!navigator.serviceWorker.controller;
             navigator.serviceWorker.register('/sw.js?v={{v}}').catch(function () { });
             navigator.serviceWorker.addEventListener('controllerchange', function () {
-                if (!hadController || window.__ytdlReloaded) return;
+                // An asleep copy (another one took over) must not reload: loading claims
+                // the player back, and the two would keep taking it from each other.
+                if (!hadController || window.__ytdlReloaded || window.__ytdlAsleep) return;
                 window.__ytdlReloaded = true;
                 location.reload();
             });

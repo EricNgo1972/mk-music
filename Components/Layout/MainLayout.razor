@@ -18,8 +18,6 @@
         </div>
         @* Plain JS, like everything else in this shell: syncing is exactly what you reach
            for when the circuit is unhealthy, so it must not depend on one. *@
-        @* The screens this app plays on besides this one: TVs, kiosks, spare phones. *@
-        <a class="icon-btn" href="players" aria-label="Players" title="Players">◫</a>
         <button class="icon-btn" id="btn-sync" aria-label="Sync with server" title="Sync with server"
                 onclick="ytdlSync()">⟳</button>
         <button class="icon-btn" id="btn-search" aria-label="Search" onclick="ytdlUI.toggleSearch()">⌕</button>
@@ -43,11 +41,12 @@
        floating over the content. *@
     <div id="np-slot"></div>
 
-    @* Two places to be, and one to return to. Adding a link is a thing you do occasionally
+    @* Three places to be, and one to return to. Adding a link is a thing you do occasionally
        and from the Library ("From YouTube"), so it no longer earns a permanent tab; what
        you almost always want back is whatever is playing. That middle button appears only
        when there IS something playing — body.has-np is set by player.js — so it is never
-       a dead control. Plain JS, like every other control on the path to playback. *@
+       a dead control. Plain JS, like every other control on the path to playback.
+       Players is the other screens this app plays on: TVs, kiosks, spare phones. *@
     <nav class="tabbar">
         <NavLink class="tab" href="" Match="NavLinkMatch.All">
             <span class="tab-i">≡</span><span class="tab-l">Playlists</span>
@@ -57,6 +56,9 @@
         </button>
         <NavLink class="tab" href="library">
             <span class="tab-i">♪</span><span class="tab-l">Library</span>
+        </NavLink>
+        <NavLink class="tab" href="players">
+            <span class="tab-i">◫</span><span class="tab-l">Players</span>
         </NavLink>
     </nav>
 </div>

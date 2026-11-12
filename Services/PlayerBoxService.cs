@@ -36,6 +36,7 @@ public sealed class BoxState
     public double Pos { get; set; }
     public double Dur { get; set; }
     public double Volume { get; set; } = 1;
+    public bool Muted { get; set; }
     public int Index { get; set; } = -1;
     public int Count { get; set; }
     public bool Shuffle { get; set; }

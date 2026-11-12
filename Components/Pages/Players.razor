@@ -107,7 +107,7 @@
 
                 @if (st.NeedsTap)
                 {
-                    <div class="plr-alert">Waiting for a tap on its screen. The browser blocks sound until someone touches it once.</div>
+                    <div class="plr-alert">Waiting for a tap on its screen. The browser blocks sound until someone touches it once. Installed as an app, the player won’t need this.</div>
                 }
                 @if (!string.IsNullOrEmpty(st.Note))
                 {
@@ -120,11 +120,12 @@
                     <button class="plr-btn" title="Next" @onclick='() => Cmd(p, new { type = "next" })'>▶▶</button>
                     <button class="plr-btn @(st.Shuffle ? "on" : "")" title="Shuffle"
                             @onclick='() => Cmd(p, new { type = "shuffle", on = !st.Shuffle })'>⤮</button>
-                    <label class="plr-vol" title="Volume">
-                        <span>🔈</span>
+                    <div class="plr-vol">
+                        <button class="plr-mute @(st.Muted ? "on" : "")" title="@(st.Muted ? "Unmute" : "Mute")"
+                                @onclick='() => Cmd(p, new { type = "mute", on = !st.Muted })'>@(st.Muted || st.Volume == 0 ? "🔇" : "🔊")</button>
                         <input type="range" min="0" max="100" step="5" value="@((int)Math.Round(st.Volume * 100))"
-                               @onchange="e => Volume(p, e)" />
-                    </label>
+                               title="Volume" @onchange="e => Volume(p, e)" />
+                    </div>
                 </div>
                 @if (st.Count > 0)
                 {
@@ -394,7 +395,8 @@
         var st = p.State;
         if (st is null || st.Url is null) return "Online · nothing playing";
         if (st.NeedsTap) return "Online · waiting for a tap";
-        return st.Playing ? "Playing" : "Paused";
+        var muted = st.Muted ? " · muted" : "";
+        return (st.Playing ? "Playing" : "Paused") + muted;
     }
 
     private static string Ago(DateTime utc)
