@@ -44,6 +44,8 @@ public sealed class BoxState
     public bool NeedsTap { get; set; }
     /// <summary>Tracks of the current playlist already saved on the box.</summary>
     public int Saved { get; set; }
+    /// <summary>Which of them, as stream paths (/stream/{id}/{n}).</summary>
+    public List<string>? SavedUrls { get; set; }
     public string? Note { get; set; }
 }
 
@@ -397,6 +399,21 @@ public sealed class PlayerBoxService
             return new PlayerView(p.DeviceId, p.Name, p.PairedUtc, seen?.Utc, seen?.Version,
                 IsOnline(p.KeyHash), IsConnected(p.KeyHash), st?.Item1, st?.Item2);
         }).ToList();
+    }
+
+    /// <summary>For each stream path some player has saved: the names of those players.
+    /// As fresh as each player's last report (held in memory, refilled within 15 s of a
+    /// server restart).</summary>
+    public IReadOnlyDictionary<string, List<string>> SavedOnPlayers()
+    {
+        var map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var p in Players())
+            foreach (var u in p.State?.SavedUrls ?? [])
+            {
+                if (!map.TryGetValue(u, out var names)) map[u] = names = [];
+                if (!names.Contains(p.Name)) names.Add(p.Name);
+            }
+        return map;
     }
 
     /// <summary>The boxes showing a code right now, oldest first.</summary>

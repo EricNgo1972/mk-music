@@ -154,6 +154,15 @@ public class DownloadJobService : BackgroundService
     }
 
     /// <summary>
+    /// Queues a fetch for every track in a playlist that is still only a link. Used when a
+    /// playlist is sent to a player: a player can only save to itself what the server has,
+    /// and it re-checks its playlist every few minutes, so each track lands on the player
+    /// soon after it lands here. Returns how many fetches were queued.
+    /// </summary>
+    public int EnqueuePending(Models.Playlist pl) =>
+        pl.RecordIds.Distinct().Count(id => EnqueueFetch(id) is not null);
+
+    /// <summary>
     /// How the fetch for one library record is going, or null if nothing is fetching it.
     /// Lets a track's own row show its own progress, so starting a download and watching
     /// it are the same place rather than two different pages.

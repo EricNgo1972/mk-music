@@ -62,6 +62,7 @@
     var needsTap = false;              // the browser is refusing sound until a touch
     var note = '';
     var saved = 0;                     // tracks of the current playlist already on this box
+    var savedUrls = [];                // ...and which ones, so the Library can show it per track
     var failures = 0;                  // consecutive tracks that would not play
     var gen = 0;                       // bumped per track, so late async results can tell they're stale
 
@@ -495,9 +496,11 @@
         counting = true;
         try {
             var have = await ytdlOffline.cachedSet(true);
-            var n = 0;
-            if (now) now.tracks.forEach(function (t) { if (have.has(pathOf(t.url))) n++; });
-            if (n !== saved) { saved = n; pushSoon(); }
+            var list = [];
+            if (now) now.tracks.forEach(function (t) { if (have.has(pathOf(t.url))) list.push(pathOf(t.url)); });
+            if (list.length !== saved || list.join() !== savedUrls.join()) {
+                saved = list.length; savedUrls = list; pushSoon();
+            }
         } catch (e) { }
         counting = false;
     }
@@ -578,6 +581,7 @@
             shuffle: !!(now && now.shuffle),
             needsTap: needsTap,
             saved: saved,
+            savedUrls: savedUrls,
             note: note || null,
         };
     }

@@ -88,7 +88,9 @@
         }
     }
 
-    // "Offline" / "Not saved" on every track row, plus the header's running count. Reads
+    // "Downloaded" on every track row the server has the audio for (whether THIS browser
+    // also saved it only shows as the mark's colour and tooltip: the device that matters
+    // is the player, which the Library shows separately), plus the header's running count. Reads
     // only the Cache API — no network, so it's just as accurate on a mountain as on wifi.
     async function paintTracks() {
         var set = await ytdlOffline.cachedSet(true);
@@ -110,10 +112,11 @@
                 var u = m.getAttribute('data-off-for');
                 var on = set.has(u);
                 var pr = partial[u];
-                m.textContent = on ? 'Offline' : (pr ? 'Saved ' + Math.round(pr.fraction * 100) + '%' : 'Not saved');
+                m.textContent = pr && !on ? 'Saved ' + Math.round(pr.fraction * 100) + '%' : 'Downloaded';
                 m.classList.toggle('on', on);
-                m.title = on ? 'Saved on this phone — plays with no network'
-                    : (pr ? 'Download stopped part-way — tap ⋯ to resume' : 'Needs a connection to play');
+                m.title = on ? 'Downloaded, and saved on this device — plays with no network'
+                    : (pr ? 'Saving to this device stopped part-way — tap ⋯ to resume'
+                        : 'Downloaded on the server — needs a connection to play here');
             });
             var count = document.getElementById('offline-count');
             if (count) {
@@ -212,14 +215,14 @@
         if (discard) {                                    // throw away a part-finished download
             setMark(url, 'Removing…', true, false);
             await ytdlOffline.removeTrack(url);
-            setMark(url, 'Not saved', false, false);
+            setMark(url, 'Downloaded', false, false);
             schedule();
             return;
         }
         if (set.has(url)) {
             setMark(url, 'Removing…', true, false);
             await ytdlOffline.removeTrack(url);
-            setMark(url, 'Not saved', false, false);
+            setMark(url, 'Downloaded', false, false);
             schedule();
             return;
         }
