@@ -35,6 +35,9 @@
     var LS_NOW = 'ytdl.box.now';   // what it is playing, so a reboot carries on
     var LS_VOL = 'ytdl.box.vol';
     var LS_MUTE = 'ytdl.box.mute';
+    var LS_CIDS = 'ytdl.box.cids'; // commands already handled: the server sends each one twice
+    var STREAM_MS = 40000;     // no ping on the command stream this long: it is dead, reopen it
+    var RESUME_MS = 3000;      // a pause nobody asked for is undone after this long
 
     function $(id) { return document.getElementById(id); }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -107,7 +110,7 @@
         clearTimeout(helloTimer);
         if (asleep) return;
         try {
-            var r = await post('/api/box/hello', { key: key, version: V, state: me ? report() : null });
+            var r = await post('/api/box/hello', { key: key, version: V, state: me ? report() : null, dedupe: true });
             if (!r.ok) throw new Error('status ' + r.status);
             var h = await r.json();
             setLink(true);
@@ -124,7 +127,10 @@
             }
             // A stream that hit a hard error (a 4xx, a proxy restart) is closed for good;
             // EventSource only retries on its own after a network-level drop.
-            if (!es || es.readyState === 2) listen();
+            // A stream can also die without telling anyone (the far end of a proxy hung up,
+            // the device slept): it stays "open" but nothing comes. The server pings every
+            // 15 s, so silence for longer than that means reopen it.
+            if (!es || es.readyState === 2 || Date.now() - lastStream > STREAM_MS) listen();
         } catch (e) {
             setLink(false);
         }
@@ -146,21 +152,38 @@
 
     // --- live commands -----------------------------------------------------------------
     var es = null;
+    var lastStream = 0;                // when the command stream last said anything
     function listen() {
         if (!window.EventSource) return;
         if (es) { try { es.close(); } catch (e) { } }
+        lastStream = Date.now();       // give the new stream a full window to open
         try { es = new EventSource('/api/box/events?key=' + encodeURIComponent(key)); }
         catch (e) { es = null; return; }
-        es.onopen = function () { setLink(true); };
+        es.onopen = function () { lastStream = Date.now(); setLink(true); };
+        es.addEventListener('ping', function () { lastStream = Date.now(); });
         es.onmessage = function (e) {
+            lastStream = Date.now();
             var cmd;
             try { cmd = JSON.parse(e.data); } catch (err) { return; }
             handle(cmd);
         };
     }
 
+    // Each command comes down the stream and again with the next check-in; act on it once.
+    // Kept in storage, so a "reload" is not repeated by the page it reloaded into.
+    function seenBefore(cid) {
+        if (!cid) return false;
+        var list = readJson(LS_CIDS);
+        if (!Array.isArray(list)) list = [];
+        if (list.indexOf(cid) >= 0) return true;
+        list.push(cid);
+        lsSet(LS_CIDS, JSON.stringify(list.slice(-30)));
+        return false;
+    }
+
     function handle(cmd) {
         if (asleep || !cmd || !cmd.type) return;
+        if (cmd.type !== 'hello' && seenBefore(cmd.cid)) return;
         switch (cmd.type) {
             case 'hello': hello(); return;
             case 'reload': location.reload(); return;
@@ -382,8 +405,26 @@
         render();
         pushSoon();
     });
-    audio.addEventListener('pause', function () { render(); pushSoon(); });
+    // A pause this page did not ask for: the device took the sound for something else (a
+    // notification, another app, a screen saver) or the browser gave up on a starved
+    // stream. pause() and stop() clear now.playing first, so those never come here. Try
+    // to carry on; tryPlay arms the stall timer, so a track that still won't go is skipped.
+    audio.addEventListener('pause', function () {
+        render();
+        pushSoon();
+        if (!now || !now.playing || needsTap || audio.ended) return;
+        var myGen = gen;
+        setTimeout(function () {
+            if (myGen !== gen || !now || !now.playing || needsTap || !audio.paused || audio.ended) return;
+            if (!audio.getAttribute('src')) return;
+            note = 'Resumed after the device paused it.';
+            tryPlay();
+            render();
+            pushSoon();
+        }, RESUME_MS);
+    });
     audio.addEventListener('waiting', function () { if (now && now.playing) armStall(); });
+    audio.addEventListener('stalled', function () { if (now && now.playing && !audio.paused) armStall(); });
     audio.addEventListener('progress', function () { if (stallTimer) armStall(); });
     audio.addEventListener('ended', function () {
         if (takePendingList()) return;

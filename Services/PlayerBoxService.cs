@@ -132,6 +132,11 @@ public sealed class PlayerBoxService
     private readonly ConcurrentDictionary<string, (BoxState State, DateTime Utc)> _state = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, bool> _reload = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (string Json, DateTime Utc)> _pending = new(StringComparer.Ordinal);
+    // Boxes whose page drops a command it has already handled (by its "cid"). Those get
+    // every command twice: down the stream and again at the next check-in, so a stream
+    // that went dead without either end noticing can no longer swallow a "play".
+    private readonly ConcurrentDictionary<string, bool> _dedupe = new(StringComparer.Ordinal);
+    private long _cid = DateTime.UtcNow.Ticks;
     private readonly ConcurrentDictionary<string, List<Channel<string>>> _streams = new(StringComparer.Ordinal);
 
     private sealed record PendingCode(string KeyHash, DateTime CreatedUtc, DateTime LastSeenUtc);
@@ -163,10 +168,11 @@ public sealed class PlayerBoxService
     // --- the box's side ------------------------------------------------------------
 
     /// <summary>A box checking in: who it is, or the code it should show.</summary>
-    public BoxHello Hello(string key, string? version, BoxState? state)
+    public BoxHello Hello(string key, string? version, BoxState? state, bool dedupe = false)
     {
         var hash = Hash(key);
         var now = DateTime.UtcNow;
+        if (dedupe) _dedupe[hash] = true; else _dedupe.TryRemove(hash, out _);
         _seen[hash] = new Seen(now, string.IsNullOrWhiteSpace(version) ? null : version.Trim());
 
         var pairing = ByHash(hash);
@@ -329,6 +335,11 @@ public sealed class PlayerBoxService
     /// <summary>The box reloads its page: picks up a new build, or shakes off a bad state.</summary>
     public SendOutcome Reload(string deviceId)
     {
+        // A box that ignores repeats takes a queued "reload" like any other command (it
+        // remembers the cid across the reload, so it reloads once). An older box would
+        // reload again at its next check-in, so it only gets the flag when the stream missed.
+        if (ById(deviceId) is { } pb && _dedupe.ContainsKey(pb.KeyHash))
+            return Send(deviceId, new { type = "reload" });
         var outcome = Send(deviceId, new { type = "reload" }, queue: false);
         if (outcome != SendOutcome.Delivered) _reload[deviceId] = true;
         return outcome == SendOutcome.Delivered ? outcome : SendOutcome.Queued;
@@ -342,8 +353,17 @@ public sealed class PlayerBoxService
     {
         var pairing = ById(deviceId);
         if (pairing is null) return SendOutcome.Offline;
-        var json = JsonSerializer.Serialize(command, Json);
-        if (Push(pairing.KeyHash, json)) return SendOutcome.Delivered;
+        var node = JsonSerializer.SerializeToNode(command, Json)!.AsObject();
+        node["cid"] = Interlocked.Increment(ref _cid).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var json = node.ToJsonString(Json);
+        if (Push(pairing.KeyHash, json))
+        {
+            // Written to the stream is not the same as heard by the box: a connection can
+            // die on the box's side while the server still writes into it happily. A box
+            // that drops repeats also gets it at its next check-in.
+            if (queue && _dedupe.ContainsKey(pairing.KeyHash)) _pending[deviceId] = (json, DateTime.UtcNow);
+            return SendOutcome.Delivered;
+        }
         if (!IsOnline(pairing.KeyHash)) return SendOutcome.Offline;
         if (queue) _pending[deviceId] = (json, DateTime.UtcNow);
         return SendOutcome.Queued;

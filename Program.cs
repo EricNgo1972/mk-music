@@ -214,7 +214,7 @@ app.MapGet("/player", (HttpContext ctx) =>
 // code to show or the box's name, plus anything its live stream missed.
 app.MapPost("/api/box/hello", (BoxRequest req, PlayerBoxService boxes) =>
     PlayerBoxService.IsValidKey(req.Key)
-        ? Results.Json(boxes.Hello(req.Key!, req.Version, req.State))
+        ? Results.Json(boxes.Hello(req.Key!, req.Version, req.State, req.Dedupe == true))
         : Results.BadRequest());
 
 // What the box is playing, sent the moment it changes so the Players page keeps up.
@@ -224,9 +224,9 @@ app.MapPost("/api/box/state", (BoxRequest req, PlayerBoxService boxes) =>
         : Results.NotFound());
 
 // The box's command stream (Server-Sent Events). EventSource reconnects by itself, and the
-// "retry" line makes it do so after 3 s rather than the browser's default. A comment line
+// "retry" line makes it do so after 3 s rather than the browser's default. A "ping" event
 // every 15 s keeps proxies from closing a connection that is quiet only because nobody
-// pressed anything.
+// pressed anything, and lets the box notice a stream that has silently died.
 app.MapGet("/api/box/events", async (string? key, PlayerBoxService boxes, HttpContext ctx) =>
 {
     if (!PlayerBoxService.IsValidKey(key)) { ctx.Response.StatusCode = 400; return; }
@@ -258,7 +258,9 @@ app.MapGet("/api/box/events", async (string? key, PlayerBoxService boxes, HttpCo
                 }
                 else
                 {
-                    await ctx.Response.WriteAsync(": ping\n\n", ct);
+                    // A named event, not a comment: the box's page sees it (comments never
+                    // reach script) and reconnects when these stop arriving.
+                    await ctx.Response.WriteAsync("event: ping\ndata: 1\n\n", ct);
                 }
                 await ctx.Response.Body.FlushAsync(ct);
             }
@@ -296,7 +298,7 @@ app.MapPost("/api/players/{id}/play", (string id, CastRequest req, PlayerBoxServ
 
 app.Run();
 
-internal sealed record BoxRequest(string? Key, string? Version, BoxState? State);
+internal sealed record BoxRequest(string? Key, string? Version, BoxState? State, bool? Dedupe = null);
 internal sealed record CastRequest(string? PlaylistId, string? Start, bool? Shuffle);
 
 internal static class ListenPage
