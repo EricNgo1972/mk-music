@@ -4,17 +4,23 @@
 @inject HistoryService Store
 @inject UploadService Uploads
 @inject DownloadJobService Jobs
+@inject PlayerBoxService Boxes
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
 <PageTitle>Library</PageTitle>
 
-@* Filter chips are client-side (offline/not-saved is Cache API state the server can't
-   see), so ui.js drives them and filters rows by [data-off-for]. *@
+@* Two facts, both known on the server: Downloaded / Not downloaded is whether the server
+   has the audio; "On player" is whether a paired player (the phone playing in the shop)
+   has saved it, as that player last reported. ui.js filters rows client-side. *@
 <div class="chips">
     <button class="chip on" data-filter="all">All @_records.Count</button>
-    <button class="chip" data-filter="offline">Offline <span data-count="offline">0</span></button>
-    <button class="chip" data-filter="missing">Not saved <span data-count="missing">0</span></button>
+    <button class="chip" data-filter="downloaded">Downloaded @_records.Count(r => !r.Pending)</button>
+    <button class="chip" data-filter="link">Not downloaded @_records.Count(r => r.Pending)</button>
+    @if (_onPlayers.Count > 0)
+    {
+        <button class="chip" data-filter="player">On player @_records.Count(r => OnPlayers(r) is not null)</button>
+    }
     @if (_showArchived || _archivedCount > 0)
     {
         <button class="chip needs-circuit" @onclick="ToggleView">
@@ -93,7 +99,8 @@ else
             <div class="trk" data-track-url="@trackUrl" data-title="@r.Title"
                  data-artist="@TrackVisuals.Artist(r.Author)"
                  data-share-id="@r.Id" data-share-title="@r.Title"
-                 data-pending="@(r.Pending ? "1" : "0")" data-speech="@(r.SpokenWord ? "1" : "0")">
+                 data-pending="@(r.Pending ? "1" : "0")" data-speech="@(r.SpokenWord ? "1" : "0")"
+                 data-on-player="@(OnPlayers(r) is null ? "0" : "1")">
                 <button class="trk-hit" onclick="ytdlPlayer.playEl(this)"
                         data-track-url="@trackUrl" data-title="@r.Title"
                         data-artist="@TrackVisuals.Artist(r.Author)" disabled="@(trackUrl is null)">
@@ -125,7 +132,14 @@ else
                             }
                             else
                             {
-                                <span class="trk-off" data-off-for="@trackUrl">…</span>
+                                <span class="trk-off" data-off-for="@trackUrl">Downloaded</span>
+                                if (OnPlayers(r) is { } names)
+                                {
+                                    <span class="trk-dot">·</span>
+                                    <span class="trk-player" title="Saved on @string.Join(", ", names) — plays there with no network">
+                                        On @(names.Count <= 2 ? string.Join(", ", names) : $"{names.Count} players")
+                                    </span>
+                                }
                             }
                             @if (LyricsService.Has(r))
                             {
@@ -188,6 +202,14 @@ else
 @code {
     private IReadOnlyList<DownloadRecord> _records = Array.Empty<DownloadRecord>();
     private bool _showArchived;
+    private IReadOnlyDictionary<string, List<string>> _onPlayers = new Dictionary<string, List<string>>();
+
+    /// <summary>The players that have saved this track, or null if none has.</summary>
+    private List<string>? OnPlayers(DownloadRecord r)
+    {
+        var i = FirstAudioIndex(r);
+        return i >= 0 && _onPlayers.TryGetValue($"/stream/{r.Id}/{i}", out var n) ? n : null;
+    }
     private int _archivedCount;
 
     private bool _uploading;
@@ -290,6 +312,7 @@ else
     private void Reload()
     {
         _records = _showArchived ? Store.ArchivedItems() : Store.Active();
+        _onPlayers = Boxes.SavedOnPlayers();
         _archivedCount = Store.ArchivedCount();
     }
 

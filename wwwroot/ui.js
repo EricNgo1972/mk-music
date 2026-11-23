@@ -56,7 +56,11 @@ window.ytdlUI = (function () {
             var okText = !query || hay.indexOf(query) >= 0;
             var off = r.querySelector('.trk-off');
             var saved = !!(off && off.classList.contains('on'));
-            var okFilter = filter === 'all' || (filter === 'offline' ? saved : !saved);
+            var link = r.getAttribute('data-pending') === '1';
+            var okFilter = filter === 'all'
+                || (filter === 'downloaded' && !link)
+                || (filter === 'link' && link)
+                || (filter === 'player' && r.getAttribute('data-on-player') === '1');
             var vis = okText && okFilter;
             r.hidden = !vis;
             if (vis) shown++;
@@ -65,20 +69,9 @@ window.ytdlUI = (function () {
         if (none) none.hidden = !(rows.length && shown === 0);
     }
 
-    // Counts for the chips, and the "on this phone" meter. Both read the Cache API only.
+    // The "on this phone" storage meter. Reads the Cache API only. (The chip counts are
+    // server facts now, rendered by the page.)
     async function paintStorage() {
-        var rows = document.querySelectorAll('#lib-rows .trk');
-        if (rows.length) {
-            var saved = 0;
-            rows.forEach(function (r) {
-                var o = r.querySelector('.trk-off');
-                if (o && o.classList.contains('on')) saved++;
-            });
-            var a = document.querySelector('[data-count="offline"]');
-            var b = document.querySelector('[data-count="missing"]');
-            if (a) a.textContent = String(saved);
-            if (b) b.textContent = String(rows.length - saved);
-        }
 
         var fill = $('storage-fill'), label = $('storage-label');
         if (!fill || !label) return;
@@ -155,7 +148,9 @@ window.ytdlUI = (function () {
         var saved = !!(off && off.classList.contains('on'));
 
         $('sheet-title').textContent = row.getAttribute('data-title') || '';
-        $('sheet-sub').textContent = [row.getAttribute('data-artist'), saved ? 'On this phone' : 'Not saved'].filter(Boolean).join(' · ');
+        var status = row.getAttribute('data-pending') === '1' ? 'Not downloaded'
+            : saved ? 'Downloaded · on this device' : 'Downloaded';
+        $('sheet-sub').textContent = [row.getAttribute('data-artist'), status].filter(Boolean).join(' · ');
 
         var host = $('sheet-items');
         host.innerHTML = '';

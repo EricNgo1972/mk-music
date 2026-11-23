@@ -4,6 +4,7 @@
 @inject PlayerBoxService Boxes
 @inject PlaylistService Playlists
 @inject HistoryService History
+@inject DownloadJobService Jobs
 @inject IJSRuntime JS
 
 <PageTitle>Players</PageTitle>
@@ -320,7 +321,11 @@
         try
         {
             var outcome = Boxes.Play(p.DeviceId, pl, History);
-            Report(p, outcome, quietWhenDelivered: false, what: $"Playing {pl.Name}");
+            // Tracks still only a link get downloaded now, so the player can save them too.
+            var fetching = Jobs.EnqueuePending(pl);
+            Report(p, outcome, quietWhenDelivered: false, what: fetching > 0
+                ? $"Playing {pl.Name} · downloading {fetching} track{(fetching == 1 ? "" : "s")} for the player"
+                : $"Playing {pl.Name}");
         }
         catch (InvalidOperationException e) { Flash(p.DeviceId, e.Message); }
     }

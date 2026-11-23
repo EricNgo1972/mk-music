@@ -284,13 +284,14 @@ app.MapGet("/api/players", (PlayerBoxService boxes) =>
     })));
 
 app.MapPost("/api/players/{id}/play", (string id, CastRequest req, PlayerBoxService boxes,
-    PlaylistService playlists, HistoryService history) =>
+    PlaylistService playlists, HistoryService history, DownloadJobService jobs) =>
 {
     var pl = playlists.Get(req.PlaylistId ?? "");
     if (pl is null) return Results.NotFound(new { error = "That playlist no longer exists." });
     try
     {
         var outcome = boxes.Play(id, pl, history, req.Start, req.Shuffle);
+        jobs.EnqueuePending(pl);   // so the player can save the link-only tracks too
         return Results.Json(new { outcome = outcome.ToString().ToLowerInvariant() });
     }
     catch (InvalidOperationException e) { return Results.BadRequest(new { error = e.Message }); }
