@@ -112,7 +112,8 @@
                 var u = m.getAttribute('data-off-for');
                 var on = set.has(u);
                 var pr = partial[u];
-                m.textContent = pr && !on ? 'Saved ' + Math.round(pr.fraction * 100) + '%' : 'Downloaded';
+                var t = pr && !on ? 'Saved ' + Math.round(pr.fraction * 100) + '%' : 'Downloaded';
+                if (m.textContent !== t) m.textContent = t;
                 m.classList.toggle('on', on);
                 m.title = on ? 'Downloaded, and saved on this device — plays with no network'
                     : (pr ? 'Saving to this device stopped part-way — tap ⋯ to resume'
@@ -120,9 +121,8 @@
             });
             var count = document.getElementById('offline-count');
             if (count) {
-                count.textContent = set.size === 1
-                    ? '1 track ready offline'
-                    : set.size + ' tracks ready offline';
+                var c = set.size === 1 ? '1 track ready offline' : set.size + ' tracks ready offline';
+                if (count.textContent !== c) count.textContent = c;
             }
         });
         // Chips, search and the storage meter all read the labels we just painted.
@@ -177,6 +177,16 @@
         quiet(function () { states.forEach(function (s) { paint(s[0], s[1]); }); });
     }
     function schedule() { clearTimeout(timer); timer = setTimeout(sync, 150); }
+
+    // The player's bar and full screen tick their clock and lyrics every second while a
+    // track plays; none of that changes a row, so it must not cost a full repaint (which
+    // reads the whole Cache API). Only changes to the page itself count.
+    function onMutations(records) {
+        for (var i = 0; i < records.length; i++) {
+            var t = records[i].target;
+            if (!(t.closest && t.closest('.np-bar, .np-full'))) { schedule(); return; }
+        }
+    }
 
     // Called by the server side after any playlist edit (add / remove / reorder / rename
     // / delete). The device's copy of the manifest is what the player resolves a tap
@@ -495,7 +505,7 @@
     function boot() {
         applyOpen();                                             // no debounce: re-open immediately on load
         applyMode();
-        observer = new MutationObserver(schedule);
+        observer = new MutationObserver(onMutations);
         observer.observe(document.body, { childList: true, subtree: true });
         schedule();
     }

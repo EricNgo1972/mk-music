@@ -268,7 +268,13 @@
     var healTimer = null;
     function watchMount() {
         if (typeof MutationObserver === 'undefined') return;
-        new MutationObserver(function () {
+        // Our own clock/lyrics updates are not "the page changed" — skip them, or the
+        // position text ticking once a second re-scans every row on the page.
+        new MutationObserver(function (records) {
+            var page = records.some(function (r) {
+                return !(barEl && barEl.contains(r.target)) && !(fullEl && fullEl.contains(r.target));
+            });
+            if (!page) return;
             clearTimeout(healTimer);
             healTimer = setTimeout(heal, 60);
         }).observe(document.body, { childList: true, subtree: true });

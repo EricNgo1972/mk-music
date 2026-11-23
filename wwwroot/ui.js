@@ -12,10 +12,16 @@ window.ytdlUI = (function () {
     var filter = 'all';
 
     function $(id) { return document.getElementById(id); }
+    // Write text only when it differs. Assigning textContent — even the same string —
+    // replaces the text node, which is a childList mutation; playlist-offline.js repaints
+    // on those and calls refresh() again, so an unconditional write here made the page
+    // repaint itself forever (~50 Cache API reads a second, on an idle page): the cause
+    // of phones running hot with the screen off.
+    function txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
 
     function setTitle() {
         var el = $('view-title');
-        if (el) el.textContent = TITLES[location.pathname] || 'My Music';
+        txt(el, TITLES[location.pathname] || 'My Music');
     }
 
     // --- search --------------------------------------------------------------------
@@ -87,19 +93,21 @@ window.ytdlUI = (function () {
                 if (est.usage) used = Math.max(used, est.usage);
             }
         } catch (e) { }
-        fill.style.width = (quota ? Math.min(100, (used / quota) * 100) : 0) + '%';
-        label.textContent = quota ? gb(used) + ' of ' + gb(quota) + ' used' : gb(used) + ' saved on this phone';
+        var w = (quota ? Math.min(100, (used / quota) * 100) : 0) + '%';
+        if (fill.style.width !== w) fill.style.width = w;
+        var text = quota ? gb(used) + ' of ' + gb(quota) + ' used' : gb(used) + ' saved on this phone';
 
         // Whether the browser has agreed not to evict this data matters more than the
         // number: without it, a long gap between trips can silently bin the downloads.
         try {
             var s = await ytdlOffline.space();
             if (!s.persisted) {
-                label.textContent += ' · not protected from cleanup';
+                text += ' · not protected from cleanup';
                 label.title = 'The browser may reclaim this space. Installing the app to your ' +
                               'home screen makes downloads persistent.';
             }
         } catch (e) { }
+        txt(label, text);
     }
     function gb(b) {
         if (b >= 1024 * 1024 * 1024) return (b / 1024 / 1024 / 1024).toFixed(1) + ' GB';
@@ -236,10 +244,10 @@ window.ytdlUI = (function () {
         if (!el) return;
         try {
             var shell = (await caches.keys()).filter(function (k) { return k.indexOf('ytdl-shell-') === 0; });
-            el.textContent = shell.length
+            txt(el, shell.length
                 ? 'offline cache ' + shell[0].replace('ytdl-shell-', '')
-                : 'no offline cache yet';
-        } catch (e) { el.textContent = 'offline cache unavailable'; }
+                : 'no offline cache yet');
+        } catch (e) { txt(el, 'offline cache unavailable'); }
     }
 
     function refresh() { setTitle(); bindChips(); applyRows(); paintStorage(); paintVersion(); }
